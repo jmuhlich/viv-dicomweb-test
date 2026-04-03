@@ -1,0 +1,31 @@
+{
+  "name": "viv-dicomweb-test",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "packageManager": "pnpm@10.27.0",
+  "dependencies": {
+    "@deck.gl/core": "~9.1.15",
+    "@deck.gl/extensions": "~9.1.15",
+    "@deck.gl/geo-layers": "~9.1.15",
+    "@deck.gl/layers": "~9.1.15",
+    "@deck.gl/mesh-layers": "~9.1.15",
+    "@deck.gl/react": "~9.1.15",
+    "@deck.gl/widgets": "~9.1.15",
+    "@hms-dbmi/viv": "~0.19.0",
+    "@luma.gl/constants": "~9.1.10",
+    "@luma.gl/core": "~9.1.10",
+    "@luma.gl/engine": "~9.1.10",
+    "@luma.gl/shadertools": "~9.1.10",
+    "@luma.gl/webgl": "~9.1.10"
+  },
+  "devDependencies": {
+    "vite": "^8.0.0"
+  }
+}

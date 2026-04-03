@@ -1,0 +1,32 @@
+<style>
+ body {
+     margin: 0;
+ }
+ .wrap {
+     height: 100vh;
+     display: grid;
+     grid-template-columns: 1fr 1fr;
+     grid-template-rows: 2.5rem auto;
+ }
+ .wrap h2 {
+     margin: 1rem;
+     grid-row: 1;
+ }
+ .wrap iframe {
+     grid-row: 2;
+     height: 100%;
+     width: 100%;
+     display: block;
+     border: 0;
+     padding: 1em 1em 1em 1em;
+     box-sizing: border-box;
+ }
+</style>
+
+<div class="wrap">
+    <h2>OME-TIFF</h2>
+    <iframe src="ometiff.html"></iframe>
+    <h2>DicomWeb</h2>
+    <iframe src="dicomweb.html"></iframe>
+  </div>
+</div>
