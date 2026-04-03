@@ -1,7 +1,52 @@
 import { MultiscaleImageLayer } from '@hms-dbmi/viv';
 import { Deck, OrthographicView } from '@deck.gl/core';
 
-import * as dcmjs from "https://esm.sh/dcmjs@0.41.0";
+import * as DICOMMicroscopyViewer from 'dicom-microscopy-viewer';
+import * as DICOMwebClient from 'dicomweb-client';
+
+// Construct client instance
+const client = new DICOMwebClient.api.DICOMwebClient({
+    url: 'https://us-central1-idc-external-031.cloudfunctions.net/minerva_proxy'
+});
+
+// Retrieve metadata of a series of DICOM VL Whole Slide Microscopy Image instances
+const retrieveOptions = {
+    studyInstanceUID: '2.25.112849421593762410108114587383519700602',
+    seriesInstanceUID: '1.3.6.1.4.1.5962.99.1.331207435.2054329796.1752677896971.4.0'
+};
+client.retrieveSeriesMetadata(retrieveOptions).then((metadata) => {
+  // Parse, format, and filter metadata
+  const volumeImages = [];
+  metadata.forEach(m => {
+    const image = new DICOMMicroscopyViewer.metadata.VLWholeSlideMicroscopyImage({
+      metadata: m
+    });
+    const imageFlavor = image.ImageType[2];
+    if (imageFlavor === 'VOLUME' || imageFlavor === 'THUMBNAIL') {
+      volumeImages.push(image);
+    }
+  });
+
+  // Construct viewer instance
+  const viewer = new DICOMMicroscopyViewer.viewer.VolumeImageViewer({
+    client,
+    metadata: volumeImages
+  });
+
+  // Render viewer instance in the "viewport" HTML element
+  viewer.render({ container: 'viewport' });
+
+  window.viewer = viewer;
+  window.client = client;
+  window.images = volumeImages;
+});
+
+client.retrieveInstanceFrames({
+  studyInstanceUID: '2.25.112849421593762410108114587383519700602',
+  seriesInstanceUID: '1.3.6.1.4.1.5962.99.1.331207435.2054329796.1752677896971.4.0',
+  sopInstanceUID: '1.3.6.1.4.1.5962.99.1.331207435.2054329796.1752677896971.635.0',
+  frameNumbers: '1',
+})
 
 class DicomPixelSource {
   constructor(
@@ -92,53 +137,53 @@ class DicomPixelSource {
 
 console.log("begin");
 
-const data = levels.map(level => {
-  new DicomPixelSource(
-    sel => pyramidIndexer(
-      sel, level
-    ),
-    metadata.Pixels.Type,
-    tileSize,
-    getShapeForBinaryDownsampleLevel({
-      axes, level
-    }),
-    axes.labels,
-    meta,
-  );
-});
+// const data = levels.map(level => {
+//   new DicomPixelSource(
+//     sel => pyramidIndexer(
+//       sel, level
+//     ),
+//     metadata.Pixels.Type,
+//     tileSize,
+//     getShapeForBinaryDownsampleLevel({
+//       axes, level
+//     }),
+//     axes.labels,
+//     meta,
+//   );
+// });
 
 
-const layer = new MultiscaleImageLayer({
-  loader: data,
-  selections: [
-    {c: 8, t: 0, z: 0},
-    {c: 9, t: 0, z: 0},
-    {c: 10, t: 0, z: 0},
-    {c: 11, t: 0, z: 0}
-  ],
-  channelsVisible: [true, true, true, true],
-  contrastLimits: [
-    [4000, 40000],
-    [3000, 30000],
-    [3000, 20000],
-    [5000, 50000],
-  ],
-  colors: [
-    [0, 0, 255],
-    [0, 255, 0],
-    [255, 255, 255],
-    [255, 0, 0]
-  ]
-});
+// const layer = new MultiscaleImageLayer({
+//   loader: data,
+//   selections: [
+//     {c: 8, t: 0, z: 0},
+//     {c: 9, t: 0, z: 0},
+//     {c: 10, t: 0, z: 0},
+//     {c: 11, t: 0, z: 0}
+//   ],
+//   channelsVisible: [true, true, true, true],
+//   contrastLimits: [
+//     [4000, 40000],
+//     [3000, 30000],
+//     [3000, 20000],
+//     [5000, 50000],
+//   ],
+//   colors: [
+//     [0, 0, 255],
+//     [0, 255, 0],
+//     [255, 255, 255],
+//     [255, 0, 0]
+//   ]
+// });
 
-new Deck({
-  views: new OrthographicView(),
-  initialViewState: {
-    target: [21000, 13000, 0],
-    zoom: -6
-  },
-  controller: true,
-  layers: [layer]
-});
+// new Deck({
+//   views: new OrthographicView(),
+//   initialViewState: {
+//     target: [21000, 13000, 0],
+//     zoom: -6
+//   },
+//   controller: true,
+//   layers: [layer]
+// });
 
 console.log("running");

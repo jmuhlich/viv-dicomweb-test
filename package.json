@@ -23,7 +23,9 @@
     "@luma.gl/core": "~9.1.10",
     "@luma.gl/engine": "~9.1.10",
     "@luma.gl/shadertools": "~9.1.10",
-    "@luma.gl/webgl": "~9.1.10"
+    "@luma.gl/webgl": "~9.1.10",
+    "dicom-microscopy-viewer": "^0.48.20",
+    "dicomweb-client": "^0.11.2"
   },
   "devDependencies": {
     "vite": "^8.0.0"
