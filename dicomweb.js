@@ -39,14 +39,13 @@ client.retrieveSeriesMetadata(retrieveOptions).then((metadata) => {
   window.viewer = viewer;
   window.client = client;
   window.images = volumeImages;
+
+  const s = Object.getOwnPropertySymbols(viewer).find(s => s.description === "opticalPaths");
+  const op = viewer[s][channel];
+  const loader = op.layer.getSource().loader_;
+  loader(level, tx, ty).then(...);
 });
 
-client.retrieveInstanceFrames({
-  studyInstanceUID: '2.25.112849421593762410108114587383519700602',
-  seriesInstanceUID: '1.3.6.1.4.1.5962.99.1.331207435.2054329796.1752677896971.4.0',
-  sopInstanceUID: '1.3.6.1.4.1.5962.99.1.331207435.2054329796.1752677896971.635.0',
-  frameNumbers: '1',
-})
 
 class DicomPixelSource {
   constructor(
