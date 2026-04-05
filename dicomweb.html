@@ -2,4 +2,9 @@
 
 <style>body, canvas { background: black; }</style>
 
+<script>
+  // Configure dicom-microscopy-viewer to load its webworkers from the correct path.
+  PUBLIC_LIB_URL = window.location.href.replace('dicomweb.html', 'static/js/');
+</script>
+
 <script type="module" src="./dicomweb.js"></script>
