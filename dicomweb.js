@@ -15,8 +15,8 @@ class DicomLoader {
 
   async _getViewer() {
     if (this._viewer === undefined) {
+      // This method comes almost verbatim from the dicom-microscopy-viewer README.
       const metadata = await client.retrieveSeriesMetadata(this._retrieveOptions);
-      // Parse, format, and filter metadata
       const volumeImages = [];
       metadata.forEach(m => {
         const image = new DICOMMicroscopyViewer.metadata.VLWholeSlideMicroscopyImage({
@@ -39,6 +39,7 @@ class DicomLoader {
   }
 
   async _getOpticalPaths() {
+    // Return the (private) opticalPaths structure from the Viewer.
     if (this._opticalPaths === undefined) {
       const viewer = await this._getViewer();
       const sym_opticalPaths = Object.getOwnPropertySymbols(viewer).find(s =>
@@ -50,6 +51,7 @@ class DicomLoader {
   }
 
   async _getTileSize() {
+    // Return the tile size (one value is both width and height as we assume square tiles).
     if (this._tileSize === undefined) {
       const opticalPaths = await this._getOpticalPaths();
       const tileSizes = Object.entries(opticalPaths).map(([c, p]) => p.pyramid.tileSizes).flat(2);
@@ -62,6 +64,8 @@ class DicomLoader {
   }
 
   async _getLoader(channel) {
+    // Return the very internal per-channel loader function from deep inside the Viewer.
+    // This does so much heavy lifting for us that the encapsulation violation feels justified!
     if (this._loaders === undefined) {
       // We pass viewer.render a detached element as the container just to satisfy the call. We
       // really only need to call render to implicitly create the tile loaders.
@@ -79,6 +83,7 @@ class DicomLoader {
   }
 
   async _getShapes() {
+    // Return an array of [c,y,x] arrays, each describing the dimensions of a pyramid level.
     if (this._shapes === undefined) {
       const opticalPaths = await this._getOpticalPaths();
       const sizeC = Object.keys(opticalPaths).length;
@@ -92,6 +97,7 @@ class DicomLoader {
   }
 
   async getTile({ level, channel, x, y }) {
+    // Return a Viv PixelData object for the given coordinates.
     const loader = await this._getLoader(channel);
     const floatTile = await loader(level, x, y);
     const data = new Uint16Array(floatTile);
@@ -116,6 +122,7 @@ class DicomLoader {
   }
 
   async getSources() {
+    // Return an array of Viv PixelSource objects for each pyramid level, largest to smallest.
     const levelShapes = await this._getShapes();
     const tileSize = await this._getTileSize();
     const sources = levelShapes.map(
@@ -130,6 +137,10 @@ class DicomLoader {
 
 
 class DicomPixelSource {
+  // This is our implementation of the Viv PixelSource interface. Viv's interface works in terms of
+  // pyramid levels at the outer layer, but dicom-microscopy-viewer puts optical paths (channels) at
+  // the outer layer and nests pyramids underneath them. Thus this class is really just a very thin
+  // adaptor layer over DicomLoader.getTile to manage that difference.
   constructor(
     loader,
     level,
@@ -164,6 +175,8 @@ class DicomPixelSource {
   }
 }
 
+
+// =========================================
 
 console.log("begin");
 
