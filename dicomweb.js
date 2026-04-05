@@ -118,7 +118,9 @@ class DicomLoader {
   async getSources() {
     const levelShapes = await this._getShapes();
     const tileSize = await this._getTileSize();
-    const sources = levelShapes.map((shape, i) => new DicomPixelSource(this, i, shape, tileSize));
+    const sources = levelShapes.map(
+      (shape, i) => new DicomPixelSource(this, i, shape, 'Uint16', tileSize)
+    );
     // d-m-v pyramids go small-to-large but viv expects large-to-small.
     sources.reverse();
     return sources;
@@ -132,13 +134,14 @@ class DicomPixelSource {
     loader,
     level,
     shape,
+    dtype,
     tileSize,
   ) {
     this._loader = loader;
     this._level = level;
     this.labels = ["c", "y", "x"];
     this.shape = shape,
-    this.dtype = 'Uint16';
+    this.dtype = dtype;
     this.tileSize = tileSize;
     this.meta = null;
   }
