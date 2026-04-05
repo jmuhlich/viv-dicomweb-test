@@ -1,10 +1,10 @@
 import { loadOmeTiff, MultiscaleImageLayer } from '@hms-dbmi/viv';
 import { Deck, OrthographicView } from '@deck.gl/core';
 
-console.log("begin");
-
 const {sources, metadata} = await loadOmeTiff("https://lin-2021-crc-atlas.s3.amazonaws.com/data/CRC02.ome.tif");
-//console.log(metadata);
+
+// Everything below here is identical between the ometiff and dicomweb versions.
+// ========================================
 
 const layer = new MultiscaleImageLayer({
   loader: sources,
@@ -38,5 +38,3 @@ new Deck({
   controller: true,
   layers: [layer]
 });
-
-console.log("running");

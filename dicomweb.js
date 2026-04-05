@@ -176,9 +176,8 @@ class DicomPixelSource {
 }
 
 
-// =========================================
-
-console.log("begin");
+// Above is all the library code. Here's the setup code to use it.
+// ========================================
 
 const client = new DICOMwebClient.api.DICOMwebClient({
   url: 'https://proxy.imaging.datacommons.cancer.gov/current/viewer-only-no-downloads-see-tinyurl-dot-com-slash-3j3d9jyp/dicomWeb'
@@ -189,6 +188,9 @@ const retrieveOptions = {
 };
 const loader = new DicomLoader(client, retrieveOptions);
 const sources = await loader.getSources();
+
+// Everything below here is identical between the ometiff and dicomweb versions.
+// ========================================
 
 const layer = new MultiscaleImageLayer({
   loader: sources,
@@ -222,5 +224,3 @@ new Deck({
   controller: true,
   layers: [layer]
 });
-
-console.log("running");
