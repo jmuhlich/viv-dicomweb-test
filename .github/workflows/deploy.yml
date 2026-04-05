@@ -32,6 +32,8 @@ jobs:
         uses: actions/checkout@v6
       - name: Install pnpm
         uses: pnpm/action-setup@v5
+        with:
+          run_install: true
       - name: Build
         run: pnpm run build --base /viv-dicomweb-test
       - name: Setup Pages
