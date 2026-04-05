@@ -3,11 +3,11 @@ import { Deck, OrthographicView } from '@deck.gl/core';
 
 console.log("begin");
 
-const {data, metadata} = await loadOmeTiff("https://lin-2021-crc-atlas.s3.amazonaws.com/data/CRC02.ome.tif");
+const {sources, metadata} = await loadOmeTiff("https://lin-2021-crc-atlas.s3.amazonaws.com/data/CRC02.ome.tif");
 //console.log(metadata);
 
 const layer = new MultiscaleImageLayer({
-  loader: data,
+  loader: sources,
   selections: [
     {c: 8, t: 0, z: 0},
     {c: 9, t: 0, z: 0},
