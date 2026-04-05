@@ -1,7 +1,8 @@
 import { loadOmeTiff, MultiscaleImageLayer } from '@hms-dbmi/viv';
 import { Deck, OrthographicView } from '@deck.gl/core';
 
-const {sources, metadata} = await loadOmeTiff("https://lin-2021-crc-atlas.s3.amazonaws.com/data/CRC02.ome.tif");
+const loader = await loadOmeTiff("https://lin-2021-crc-atlas.s3.amazonaws.com/data/CRC02.ome.tif");
+const sources = loader.data;
 
 // Everything below here is identical between the ometiff and dicomweb versions.
 // ========================================
