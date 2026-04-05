@@ -4,128 +4,156 @@ import { Deck, OrthographicView } from '@deck.gl/core';
 import * as DICOMMicroscopyViewer from 'dicom-microscopy-viewer';
 import * as DICOMwebClient from 'dicomweb-client';
 
-// Construct client instance
-const client = new DICOMwebClient.api.DICOMwebClient({
-    url: 'https://us-central1-idc-external-031.cloudfunctions.net/minerva_proxy'
-});
-
-// Retrieve metadata of a series of DICOM VL Whole Slide Microscopy Image instances
-const retrieveOptions = {
-    studyInstanceUID: '2.25.112849421593762410108114587383519700602',
-    seriesInstanceUID: '1.3.6.1.4.1.5962.99.1.331207435.2054329796.1752677896971.4.0'
-};
-client.retrieveSeriesMetadata(retrieveOptions).then((metadata) => {
-  // Parse, format, and filter metadata
-  const volumeImages = [];
-  metadata.forEach(m => {
-    const image = new DICOMMicroscopyViewer.metadata.VLWholeSlideMicroscopyImage({
-      metadata: m
-    });
-    const imageFlavor = image.ImageType[2];
-    if (imageFlavor === 'VOLUME' || imageFlavor === 'THUMBNAIL') {
-      volumeImages.push(image);
-    }
-  });
-
-  // Construct viewer instance
-  const viewer = new DICOMMicroscopyViewer.viewer.VolumeImageViewer({
+class DicomLoader {
+  constructor(
     client,
-    metadata: volumeImages
-  });
+    retrieveOptions,
+  ) {
+    this._client = client;
+    this._retrieveOptions = retrieveOptions;
+  }
 
-  // Render viewer instance in the "viewport" HTML element
-  viewer.render({ container: 'viewport' });
+  async _getViewer() {
+    if (this._viewer === undefined) {
+      const metadata = await client.retrieveSeriesMetadata(this._retrieveOptions);
+      // Parse, format, and filter metadata
+      const volumeImages = [];
+      metadata.forEach(m => {
+        const image = new DICOMMicroscopyViewer.metadata.VLWholeSlideMicroscopyImage({
+          metadata: m
+        });
+        if (image.BitsAllocated != 16) {
+          throw new Error("Only 16-bit images are supported");
+        }
+        const imageFlavor = image.ImageType[2];
+        if (imageFlavor === 'VOLUME' || imageFlavor === 'THUMBNAIL') {
+          volumeImages.push(image);
+        }
+      });
+      this._viewer = new DICOMMicroscopyViewer.viewer.VolumeImageViewer({
+        client,
+        metadata: volumeImages
+      });
+    }
+    return this._viewer;
+  }
 
-  window.viewer = viewer;
-  window.client = client;
-  window.images = volumeImages;
+  async _getOpticalPaths() {
+    if (this._opticalPaths === undefined) {
+      const viewer = await this._getViewer();
+      const sym_opticalPaths = Object.getOwnPropertySymbols(viewer).find(s =>
+        s.description === "opticalPaths"
+      );
+      this._opticalPaths = viewer[sym_opticalPaths];
+    }
+    return this._opticalPaths;
+  }
 
-  const s = Object.getOwnPropertySymbols(viewer).find(s => s.description === "opticalPaths");
-  const op = viewer[s][channel];
-  const loader = op.layer.getSource().loader_;
-  loader(level, tx, ty).then(...);
-});
+  async _getTileSize() {
+    if (this._tileSize === undefined) {
+      const opticalPaths = await this._getOpticalPaths();
+      const tileSizes = Object.entries(opticalPaths).map(([c, p]) => p.pyramid.tileSizes).flat(2);
+      if (tileSizes.some(s => s != tileSizes[0])) {
+        throw new Error("Inconsistent or non-square tile sizes are not supported");
+      }
+      this._tileSize = tileSizes[0];
+    }
+    return this._tileSize;
+  }
+
+  async _getLoader(channel) {
+    if (this._loaders === undefined) {
+      // We pass viewer.render a detached element as the container just to satisfy the call. We
+      // really only need to call render to implicitly create the tile loaders.
+      (await this._getViewer()).render({container: document.createElement('div')});
+      // It seems like the event loop needs to fire in order to actually populate the loaders. I
+      // figured this out empirically -- there may be a more sound approach. Maybe just yielding
+      // with a trivially resolved promise would work too?
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      const opticalPaths = await this._getOpticalPaths();
+      this._loaders = Object.fromEntries(
+        Object.entries(opticalPaths).map(([c, p]) => [c, p.layer.getSource().loader_])
+      );
+    }
+    return this._loaders[channel];
+  }
+
+  async _getShapes() {
+    if (this._shapes === undefined) {
+      const opticalPaths = await this._getOpticalPaths();
+      const sizeC = Object.keys(opticalPaths).length;
+      this._shapes = opticalPaths[0].pyramid.metadata.map(m => {
+        const sizeY = m.TotalPixelMatrixRows;
+        const sizeX = m.TotalPixelMatrixColumns;
+        return [sizeC, sizeY, sizeX];
+      });
+    }
+    return this._shapes;
+  }
+
+  async getTile({ level, channel, x, y }) {
+    const loader = await this._getLoader(channel);
+    const floatTile = await loader(level, x, y);
+    const data = new Uint16Array(floatTile);
+    // deckgl renders out-of-bounds data in the edge tiles so we need to zero that ourselves.  Maybe
+    // we can crop the actual array and return smaller width/height values instead, if deckgl is
+    // expecting that.
+    const shape = (await this._getShapes())[level];
+    const ts = await this._getTileSize();
+    const cropX = Math.min(shape[2] - x * ts, ts);
+    const cropY = shape[1] - y * ts;
+    for (y = 0; y < ts; y++) {
+      for (x = cropX; x < ts; x++) {
+        data[y * ts + x] = 0;
+      }
+    }
+    for (y = cropY; y < ts; y++) {
+      for (x = 0; x < cropX; x++) {
+        data[y * ts + x] = 0;
+      }
+    }
+    return { data, width: ts, height: ts };
+  }
+
+  async getSources() {
+    const levelShapes = await this._getShapes();
+    const tileSize = await this._getTileSize();
+    const sources = levelShapes.map((shape, i) => new DicomPixelSource(this, i, shape, tileSize));
+    // d-m-v pyramids go small-to-large but viv expects large-to-small.
+    sources.reverse();
+    return sources;
+  }
+
+}
 
 
 class DicomPixelSource {
   constructor(
-    indexer,
-    dtype,
-    tileSize,
+    loader,
+    level,
     shape,
-    labels,
-    meta
+    tileSize,
   ) {
-    this._indexer = indexer;
-    this.dtype = dtype;
+    this._loader = loader;
+    this._level = level;
+    this.labels = ["c", "y", "x"];
+    this.shape = shape,
+    this.dtype = 'Uint16';
     this.tileSize = tileSize;
-    this.tileCache = {};
-    this.shape = shape;
-    this.labels = labels; //?
-    this.meta = meta; //?
+    this.meta = null;
   }
 
   async getRaster({ selection, signal }) {
-    const image = await this._indexer(selection);
-    return await this.getTile(
-      { x: 0, y: 0, selection, signal }
-    );
+    if (this.shape[1] > this.tileSize || this.shape[2] > this.tileSize) {
+      throw new Error("getRaster not supported for multi-tile pyramid levels");
+    }
+    return await this.getTile({ x: 0, y: 0, selection, signal });
   }
 
   async getTile({ x, y, selection, signal }) {
-    const { height, width } = this._getTileExtent(x, y);
-
-    const image = await this._indexer(selection);
-    return this._readRasters(
-      image, { x, y, width, height, signal }
-    );
-  }
-
-  async _readRasters(image, props = {}) {
-    const index = [ image.c, props.x, props.y ].join('-');
-    const frame_path = image.getPyramid().frameMappings[
-      [props.y+1, props.x+1, image.c].join('-')
-    ];
-    if (!frame_path) {
-        throw "__emptyFramePath";
-    }
-    const frame = (
-      frame_path.split("/").pop()
-    );
-    let raster = this.tileCache[index];
-    if (!raster) {
-      raster = await image.readRasters({
-        ...props
-      });
-      this.tileCache[index] = raster;
-    }
-
-    if (props.signal?.aborted) {
-      throw "__vivSignalAborted";
-    }
-
-    const { data, width, height } = raster;
-    return {
-      data, width, height
-    };
-  }
-
-  _getTileExtent(x, y) {
-    const [
-      zoomLevelHeight, zoomLevelWidth
-    ] = this.shape.slice(-2);
-    let height = this.tileSize;
-    let width = this.tileSize;
-    const maxXTileCoord = Math.floor(zoomLevelWidth / this.tileSize);
-    const maxYTileCoord = Math.floor(zoomLevelHeight / this.tileSize);
-
-    if (x === maxXTileCoord) {
-      width = zoomLevelWidth % this.tileSize;
-    }
-    if (y === maxYTileCoord) {
-      height = zoomLevelHeight % this.tileSize;
-    }
-    return { height, width };
+    const level = this._level;
+    const channel = selection.c;
+    return await this._loader.getTile({ level, channel, x, y});
   }
 
   onTileError(err) {
@@ -136,53 +164,47 @@ class DicomPixelSource {
 
 console.log("begin");
 
-// const data = levels.map(level => {
-//   new DicomPixelSource(
-//     sel => pyramidIndexer(
-//       sel, level
-//     ),
-//     metadata.Pixels.Type,
-//     tileSize,
-//     getShapeForBinaryDownsampleLevel({
-//       axes, level
-//     }),
-//     axes.labels,
-//     meta,
-//   );
-// });
+const client = new DICOMwebClient.api.DICOMwebClient({
+  url: 'https://proxy.imaging.datacommons.cancer.gov/current/viewer-only-no-downloads-see-tinyurl-dot-com-slash-3j3d9jyp/dicomWeb'
+});
+const retrieveOptions = {
+  studyInstanceUID: '2.25.93749216439228361118017742627453453196',
+  seriesInstanceUID: '1.3.6.1.4.1.5962.99.1.2344794501.795090168.1655907236229.4.0'
+};
+const loader = new DicomLoader(client, retrieveOptions);
+const sources = await loader.getSources();
 
+const layer = new MultiscaleImageLayer({
+  loader: sources,
+  selections: [
+    {c: 8, t: 0, z: 0},
+    {c: 9, t: 0, z: 0},
+    {c: 10, t: 0, z: 0},
+    {c: 11, t: 0, z: 0}
+  ],
+  channelsVisible: [true, true, true, true],
+  contrastLimits: [
+    [4000, 40000],
+    [3000, 30000],
+    [3000, 20000],
+    [5000, 50000],
+  ],
+  colors: [
+    [0, 0, 255],
+    [0, 255, 0],
+    [255, 255, 255],
+    [255, 0, 0]
+  ]
+});
 
-// const layer = new MultiscaleImageLayer({
-//   loader: data,
-//   selections: [
-//     {c: 8, t: 0, z: 0},
-//     {c: 9, t: 0, z: 0},
-//     {c: 10, t: 0, z: 0},
-//     {c: 11, t: 0, z: 0}
-//   ],
-//   channelsVisible: [true, true, true, true],
-//   contrastLimits: [
-//     [4000, 40000],
-//     [3000, 30000],
-//     [3000, 20000],
-//     [5000, 50000],
-//   ],
-//   colors: [
-//     [0, 0, 255],
-//     [0, 255, 0],
-//     [255, 255, 255],
-//     [255, 0, 0]
-//   ]
-// });
-
-// new Deck({
-//   views: new OrthographicView(),
-//   initialViewState: {
-//     target: [21000, 13000, 0],
-//     zoom: -6
-//   },
-//   controller: true,
-//   layers: [layer]
-// });
+new Deck({
+  views: new OrthographicView(),
+  initialViewState: {
+    target: [21000, 13000, 0],
+    zoom: -6
+  },
+  controller: true,
+  layers: [layer]
+});
 
 console.log("running");
