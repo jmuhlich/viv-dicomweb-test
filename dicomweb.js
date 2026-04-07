@@ -1,4 +1,5 @@
-import { MultiscaleImageLayer } from '@hms-dbmi/viv';
+import { MultiscaleImageLayer } from '@vivjs/layers';
+import { SIGNAL_ABORTED } from '@vivjs/loaders';
 import { Deck, OrthographicView } from '@deck.gl/core';
 
 import * as DICOMMicroscopyViewer from 'dicom-microscopy-viewer';
@@ -11,6 +12,8 @@ class DicomLoader {
   ) {
     this._client = client;
     this._retrieveOptions = retrieveOptions;
+    this._currentSignal = undefined;
+    this._abortedRequests = new WeakSet();
   }
 
   async _getViewer() {
@@ -30,6 +33,34 @@ class DicomLoader {
           volumeImages.push(image);
         }
       });
+      client.requestHooks = [
+        (request, metadata) => {
+          // Grab the abortsignal we stashed globally in _getTile and wire it up to cancel the
+          // request when fired. Passing the signal outside the call stack like this is making a big
+          // assumption about the dicom-microscopy-viewer and dicomweb-client code structure but
+          // there doesn't seem to be a better way to get associate each individual request object
+          // with its tile request.
+          this._currentSignal.addEventListener(
+            "abort",
+            () => {
+              // We need to be able to distinguish these deliberately aborted requests from other
+              // unexpected errors in a try/catch block in _getTile, so we stash them in a Set.
+              this._abortedRequests.add(request);
+              request.abort();
+            },
+            { once: true },
+          );
+          // Undefine this here so we can verify it's always undefined on entry to _getTile.
+          this._currentSignal = undefined;
+          return request;
+        },
+      ];
+      // dicomweb-client's _httpRequest error handler has a bug which which swallows the original
+      // error instead of attaching at as the "cause" property of the thrown error. The specific
+      // issue is that the error object itself is passed as the "options" parameter to the Error
+      // constructor instead of a properly structured options object. Here we use the client class's
+      // errorInterceptor mechanism to transform the error object to work around the bug.
+      client.errorInterceptor = (error) => { error.cause = error; };
       this._viewer = new DICOMMicroscopyViewer.viewer.VolumeImageViewer({
         client,
         metadata: volumeImages
@@ -96,10 +127,31 @@ class DicomLoader {
     return this._shapes;
   }
 
-  async getTile({ level, channel, x, y }) {
+  async getTile({ level, channel, x, y, signal }) {
     // Return a Viv PixelData object for the given coordinates.
     const loader = await this._getLoader(channel);
-    const floatTile = await loader(level, x, y);
+    // We stash the abortsignal globally and assume the loader() call will always be synchronous up
+    // through the client._httpRequest function so our requestHook can access it. This is bad, just
+    // a quick hack for now! Our requestHook sets the property back to undefined when finished, so
+    // we can verify it's always undefined here and explicitly throw if not.
+    if (this._currentSignal !== undefined) {
+      throw new Error("Failure in tile request abort signal management");
+    }
+    this._currentSignal = signal;
+    let floatTile;
+    try {
+      floatTile = await loader(level, x, y);
+    } catch (e) {
+      // If the error was triggered by one of our deliberate abort calls, ignore it and rethrow the
+      // special error string that signals this situation to Viv. Rethrow any other errors.
+      if (this._abortedRequests.has(e.cause.request)) {
+        this._abortedRequests.remove(e.request);
+        throw SIGNAL_ABORTED;
+      } else {
+        console.log("getTile: unexpected error: ", e.message);
+        throw e;
+      }
+    }
     const data = new Uint16Array(floatTile);
     // deckgl renders out-of-bounds data in the edge tiles so we need to zero that ourselves.  Maybe
     // we can crop the actual array and return smaller width/height values instead, if deckgl is
@@ -167,11 +219,11 @@ class DicomPixelSource {
   async getTile({ x, y, selection, signal }) {
     const level = this._level;
     const channel = selection.c;
-    return await this._loader.getTile({ level, channel, x, y});
+    return await this._loader.getTile({ level, channel, x, y, signal });
   }
 
   onTileError(err) {
-    console.error(err);
+    console.error(`Tile error: ${err}`);
   }
 }
 
@@ -180,7 +232,8 @@ class DicomPixelSource {
 // ========================================
 
 const client = new DICOMwebClient.api.DICOMwebClient({
-  url: 'https://proxy.imaging.datacommons.cancer.gov/current/viewer-only-no-downloads-see-tinyurl-dot-com-slash-3j3d9jyp/dicomWeb'
+  url: 'https://proxy.imaging.datacommons.cancer.gov/current/viewer-only-no-downloads-see-tinyurl-dot-com-slash-3j3d9jyp/dicomWeb',
+  verbose: false,
 });
 const retrieveOptions = {
   studyInstanceUID: '2.25.93749216439228361118017742627453453196',

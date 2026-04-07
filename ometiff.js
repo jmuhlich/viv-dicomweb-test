@@ -1,4 +1,5 @@
-import { loadOmeTiff, MultiscaleImageLayer } from '@hms-dbmi/viv';
+import { MultiscaleImageLayer } from '@vivjs/layers';
+import { loadOmeTiff } from '@vivjs/loaders';
 import { Deck, OrthographicView } from '@deck.gl/core';
 
 const loader = await loadOmeTiff("https://lin-2021-crc-atlas.s3.amazonaws.com/data/CRC02.ome.tif");
