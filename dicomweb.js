@@ -33,34 +33,6 @@ class DicomLoader {
           volumeImages.push(image);
         }
       });
-      client.requestHooks = [
-        (request, metadata) => {
-          // Grab the abortsignal we stashed globally in _getTile and wire it up to cancel the
-          // request when fired. Passing the signal outside the call stack like this is making a big
-          // assumption about the dicom-microscopy-viewer and dicomweb-client code structure but
-          // there doesn't seem to be a better way to get associate each individual request object
-          // with its tile request.
-          this._currentSignal.addEventListener(
-            "abort",
-            () => {
-              // We need to be able to distinguish these deliberately aborted requests from other
-              // unexpected errors in a try/catch block in _getTile, so we stash them in a Set.
-              this._abortedRequests.add(request);
-              request.abort();
-            },
-            { once: true },
-          );
-          // Undefine this here so we can verify it's always undefined on entry to _getTile.
-          this._currentSignal = undefined;
-          return request;
-        },
-      ];
-      // dicomweb-client's _httpRequest error handler has a bug which which swallows the original
-      // error instead of attaching at as the "cause" property of the thrown error. The specific
-      // issue is that the error object itself is passed as the "options" parameter to the Error
-      // constructor instead of a properly structured options object. Here we use the client class's
-      // errorInterceptor mechanism to transform the error object to work around the bug.
-      client.errorInterceptor = (error) => { error.cause = error; };
       this._viewer = new DICOMMicroscopyViewer.viewer.VolumeImageViewer({
         client,
         metadata: volumeImages
@@ -70,13 +42,10 @@ class DicomLoader {
   }
 
   async _getOpticalPaths() {
-    // Return the (private) opticalPaths structure from the Viewer.
+    // Return the opticalPaths structure from the Viewer.
     if (this._opticalPaths === undefined) {
       const viewer = await this._getViewer();
-      const sym_opticalPaths = Object.getOwnPropertySymbols(viewer).find(s =>
-        s.description === "opticalPaths"
-      );
-      this._opticalPaths = viewer[sym_opticalPaths];
+      this._opticalPaths = viewer.opticalPaths; // FUTURE: opticalPaths is currently private.
     }
     return this._opticalPaths;
   }
@@ -95,19 +64,12 @@ class DicomLoader {
   }
 
   async _getLoader(channel) {
-    // Return the very internal per-channel loader function from deep inside the Viewer.
-    // This does so much heavy lifting for us that the encapsulation violation feels justified!
+    // Return the per-channel loader function from the Viewer.
     if (this._loaders === undefined) {
-      // We pass viewer.render a detached element as the container just to satisfy the call. We
-      // really only need to call render to implicitly create the tile loaders.
-      (await this._getViewer()).render({container: document.createElement('div')});
-      // It seems like the event loop needs to fire in order to actually populate the loaders. I
-      // figured this out empirically -- there may be a more sound approach. Maybe just yielding
-      // with a trivially resolved promise would work too?
-      await new Promise(resolve => requestAnimationFrame(resolve));
+      const viewer = await this._getViewer();
       const opticalPaths = await this._getOpticalPaths();
       this._loaders = Object.fromEntries(
-        Object.entries(opticalPaths).map(([c, p]) => [c, p.layer.getSource().loader_])
+        Object.entries(opticalPaths).map(([c, p]) => [c, viewer.getLoader(p)]) // FUTURE: viewer doesn't currently expose loaders.
       );
     }
     return this._loaders[channel];
@@ -130,22 +92,13 @@ class DicomLoader {
   async getTile({ level, channel, x, y, signal }) {
     // Return a Viv PixelData object for the given coordinates.
     const loader = await this._getLoader(channel);
-    // We stash the abortsignal globally and assume the loader() call will always be synchronous up
-    // through the client._httpRequest function so our requestHook can access it. This is bad, just
-    // a quick hack for now! Our requestHook sets the property back to undefined when finished, so
-    // we can verify it's always undefined here and explicitly throw if not.
-    if (this._currentSignal !== undefined) {
-      throw new Error("Failure in tile request abort signal management");
-    }
-    this._currentSignal = signal;
     let floatTile;
     try {
-      floatTile = await loader(level, x, y);
+      floatTile = await loader(level, x, y, signal=signal); // FUTURE: loader functions don't currently accept an AbortSignal.
     } catch (e) {
       // If the error was triggered by one of our deliberate abort calls, ignore it and rethrow the
       // special error string that signals this situation to Viv. Rethrow any other errors.
-      if (this._abortedRequests.has(e.cause.request)) {
-        this._abortedRequests.remove(e.request);
+      if (/* is deliberately aborted request */) { // FUTURE: loader AbortSignal rejection will need to document the Error thrown.
         throw SIGNAL_ABORTED;
       } else {
         console.log("getTile: unexpected error: ", e.message);
@@ -153,23 +106,7 @@ class DicomLoader {
       }
     }
     const data = new Uint16Array(floatTile);
-    // deckgl renders out-of-bounds data in the edge tiles so we need to zero that ourselves.  Maybe
-    // we can crop the actual array and return smaller width/height values instead, if deckgl is
-    // expecting that.
-    const shape = (await this._getShapes())[level];
-    const ts = await this._getTileSize();
-    const cropX = Math.min(shape[2] - x * ts, ts);
-    const cropY = shape[1] - y * ts;
-    for (y = 0; y < ts; y++) {
-      for (x = cropX; x < ts; x++) {
-        data[y * ts + x] = 0;
-      }
-    }
-    for (y = cropY; y < ts; y++) {
-      for (x = 0; x < cropX; x++) {
-        data[y * ts + x] = 0;
-      }
-    }
+    /* omitted code to zero out-of-bounds pizels */
     return { data, width: ts, height: ts };
   }
 
