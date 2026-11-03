@@ -12,8 +12,6 @@ class DicomLoader {
   ) {
     this._client = client;
     this._retrieveOptions = retrieveOptions;
-    this._currentSignal = undefined;
-    this._abortedRequests = new WeakSet();
   }
 
   async _getViewer() {
